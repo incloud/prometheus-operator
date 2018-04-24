@@ -333,6 +333,11 @@ func (in *Endpoint) DeepCopyInto(out *Endpoint) {
 			}
 		}
 	}
+	if in.StaticTargets != nil {
+		in, out := &in.StaticTargets, &out.StaticTargets
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	return
 }
 
@@ -439,6 +444,15 @@ func (in *PrometheusSpec) DeepCopyInto(out *PrometheusSpec) {
 	}
 	if in.ServiceMonitorSelector != nil {
 		in, out := &in.ServiceMonitorSelector, &out.ServiceMonitorSelector
+		if *in == nil {
+			*out = nil
+		} else {
+			*out = new(meta_v1.LabelSelector)
+			(*in).DeepCopyInto(*out)
+		}
+	}
+	if in.ServiceMonitorNamespaceSelector != nil {
+		in, out := &in.ServiceMonitorNamespaceSelector, &out.ServiceMonitorNamespaceSelector
 		if *in == nil {
 			*out = nil
 		} else {

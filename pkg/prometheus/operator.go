@@ -37,6 +37,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -45,8 +46,6 @@ import (
 )
 
 const (
-	configFilename = "prometheus.yaml"
-
 	resyncPeriod = 5 * time.Minute
 )
 
@@ -63,6 +62,7 @@ type Operator struct {
 	cmapInf cache.SharedIndexInformer
 	secrInf cache.SharedIndexInformer
 	ssetInf cache.SharedIndexInformer
+	nsInf   cache.SharedIndexInformer
 
 	queue workqueue.RateLimitingInterface
 
@@ -240,6 +240,11 @@ func New(conf Config, logger log.Logger) (*Operator, error) {
 		UpdateFunc: c.handleUpdateStatefulSet,
 	})
 
+	c.nsInf = cache.NewSharedIndexInformer(
+		cache.NewListWatchFromClient(c.kclient.Core().RESTClient(), "namespaces", metav1.NamespaceAll, fields.Everything()),
+		&v1.Namespace{}, resyncPeriod, cache.Indexers{},
+	)
+
 	return c, nil
 }
 
@@ -292,6 +297,7 @@ func (c *Operator) Run(stopc <-chan struct{}) error {
 	go c.cmapInf.Run(stopc)
 	go c.secrInf.Run(stopc)
 	go c.ssetInf.Run(stopc)
+	go c.nsInf.Run(stopc)
 
 	if c.kubeletSyncEnabled {
 		go c.reconcileNodeEndpoints(stopc)
@@ -1015,10 +1021,12 @@ func (c *Operator) createConfig(p *monitoringv1.Prometheus, ruleFileConfigMaps [
 		return err
 	}
 
-	generatedConf := s.Data[configFilename]
-	generatedConfigMaps := s.Data[configMapsFilename]
-	curConfig, curConfigFound := curSecret.Data[configFilename]
-	curConfigMaps, curConfigMapsFound := curSecret.Data[configMapsFilename]
+	var (
+		generatedConf                     = s.Data[configFilename]
+		generatedConfigMaps               = s.Data[ruleConfigmapsFilename]
+		curConfig, curConfigFound         = curSecret.Data[configFilename]
+		curConfigMaps, curConfigMapsFound = curSecret.Data[ruleConfigmapsFilename]
+	)
 	if curConfigFound && curConfigMapsFound {
 		if bytes.Equal(curConfig, generatedConf) && bytes.Equal(curConfigMaps, generatedConfigMaps) {
 			c.logger.Log("msg", "updating config skipped, no configuration change")
@@ -1036,22 +1044,37 @@ func (c *Operator) createConfig(p *monitoringv1.Prometheus, ruleFileConfigMaps [
 }
 
 func (c *Operator) selectServiceMonitors(p *monitoringv1.Prometheus) (map[string]*monitoringv1.ServiceMonitor, error) {
+	namespaces := []string{}
 	// Selectors might overlap. Deduplicate them along the keyFunc.
 	res := make(map[string]*monitoringv1.ServiceMonitor)
 
-	selector, err := metav1.LabelSelectorAsSelector(p.Spec.ServiceMonitorSelector)
+	servMonSelector, err := metav1.LabelSelectorAsSelector(p.Spec.ServiceMonitorSelector)
 	if err != nil {
 		return nil, err
 	}
 
-	// Only service monitors within the same namespace as the Prometheus
-	// object can belong to it.
-	cache.ListAllByNamespace(c.smonInf.GetIndexer(), p.Namespace, selector, func(obj interface{}) {
-		k, ok := c.keyFunc(obj)
-		if ok {
-			res[k] = obj.(*monitoringv1.ServiceMonitor)
+	// If 'ServiceMonitorNamespaceSelector' is empty, only check own namespace.
+	if p.Spec.ServiceMonitorNamespaceSelector == nil || p.Spec.ServiceMonitorNamespaceSelector.Size() == 0 {
+		namespaces = append(namespaces, p.Namespace)
+	} else {
+		servMonNSSelector, err := metav1.LabelSelectorAsSelector(p.Spec.ServiceMonitorNamespaceSelector)
+		if err != nil {
+			return nil, err
 		}
-	})
+
+		cache.ListAll(c.nsInf.GetStore(), servMonNSSelector, func(obj interface{}) {
+			namespaces = append(namespaces, obj.(*v1.Namespace).Name)
+		})
+	}
+
+	for _, ns := range namespaces {
+		cache.ListAllByNamespace(c.smonInf.GetIndexer(), ns, servMonSelector, func(obj interface{}) {
+			k, ok := c.keyFunc(obj)
+			if ok {
+				res[k] = obj.(*monitoringv1.ServiceMonitor)
+			}
+		})
+	}
 
 	return res, nil
 }
@@ -1079,10 +1102,20 @@ func (c *Operator) createCRDs() error {
 		c.logger.Log("msg", "CRD created", "crd", crd.Spec.Names.Kind)
 	}
 
-	// We have to wait for the CRDs to be ready. Otherwise the initial watch may fail.
-	err := k8sutil.WaitForCRDReady(c.mclient.MonitoringV1().Prometheuses(c.config.Namespace).List)
-	if err != nil {
-		return err
+	crdListFuncs := []struct {
+		name     string
+		listFunc func(opts metav1.ListOptions) (runtime.Object, error)
+	}{
+		{"Prometheus", c.mclient.MonitoringV1().Prometheuses(c.config.Namespace).List},
+		{"ServiceMonitor", c.mclient.MonitoringV1().ServiceMonitors(c.config.Namespace).List},
 	}
-	return k8sutil.WaitForCRDReady(c.mclient.MonitoringV1().ServiceMonitors(c.config.Namespace).List)
+
+	for _, crdListFunc := range crdListFuncs {
+		err := k8sutil.WaitForCRDReady(crdListFunc.listFunc)
+		if err != nil {
+			return errors.Wrapf(err, "waiting for %v crd failed", crdListFunc.name)
+		}
+	}
+
+	return nil
 }

@@ -78,11 +78,8 @@ rules:
 - apiGroups: [""]
   resources:
   - nodes
-  verbs: ["list", "watch"]
-- apiGroups: [""]
-  resources:
   - namespaces
-  verbs: ["list"]
+  verbs: ["list", "watch"]
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -109,7 +106,7 @@ spec:
       - args:
         - --kubelet-service=kube-system/kubelet
         - --config-reloader-image=quay.io/coreos/configmap-reload:v0.0.1
-        image: quay.io/coreos/prometheus-operator:v0.18.0
+        image: quay.io/coreos/prometheus-operator:v0.18.1
         name: prometheus-operator
         ports:
         - containerPort: 8080

@@ -286,7 +286,7 @@ func TestPrometheusReloadRules(t *testing.T) {
 			},
 		},
 		Data: map[string]string{
-			"test.rules": "",
+			"alerting.rules": "",
 		},
 	}
 
@@ -300,25 +300,26 @@ func TestPrometheusReloadRules(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ruleFileConfigMap.Data["test.rules"] = "# comment to trigger a configmap reload"
+	pSVC := framework.MakePrometheusService(p.Name, "not-relevant", v1.ServiceTypeClusterIP)
+	if finalizerFn, err := testFramework.CreateServiceAndWaitUntilReady(framework.KubeClient, ns, pSVC); err != nil {
+		t.Fatal(errors.Wrap(err, "creating Prometheus service failed"))
+	} else {
+		ctx.AddFinalizerFn(finalizerFn)
+	}
+
+	ruleFileConfigMap.Data["alerting.rules"] = `
+groups:
+- name: ./alerting.rules
+  rules:
+  - alert: ExampleAlert
+    expr: vector(1)
+`
 	_, err = framework.KubeClient.CoreV1().ConfigMaps(ns).Update(ruleFileConfigMap)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// remounting a ConfigMap can take some time
-	err = wait.Poll(time.Second, time.Minute*5, func() (bool, error) {
-		logs, err := testFramework.GetLogs(framework.KubeClient, ns, fmt.Sprintf("prometheus-%s-0", name), "prometheus-config-reloader")
-		if err != nil {
-			return false, err
-		}
-
-		if strings.Contains(logs, "ConfigMap modified") && strings.Contains(logs, "Rule files updated") && strings.Contains(logs, "Prometheus successfully reloaded") {
-			return true, nil
-		}
-
-		return false, nil
-	})
+	err = framework.WaitForPrometheusFiringAlert(p.Namespace, pSVC.Name, "ExampleAlert")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,6 +494,60 @@ func TestPrometheusDiscoverTargetPort(t *testing.T) {
 	err = wait.Poll(time.Second, 3*time.Minute, isDiscoveryWorking(ns, svc.Name, prometheusName))
 	if err != nil {
 		t.Fatal(errors.Wrap(err, "validating Prometheus target discovery failed"))
+	}
+}
+
+func TestPromOpMatchPromAndServMonInDiffNSs(t *testing.T) {
+	ctx := framework.NewTestCtx(t)
+	defer ctx.Cleanup(t)
+	prometheusNSName := ctx.CreateNamespace(t, framework.KubeClient)
+	serviceMonitorNSName := ctx.CreateNamespace(t, framework.KubeClient)
+	ctx.SetupPrometheusRBAC(t, prometheusNSName, framework.KubeClient)
+
+	if err := testFramework.AddLabelsToNamespace(
+		framework.KubeClient,
+		serviceMonitorNSName,
+		map[string]string{"team": "frontend"},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	group := "sample-app"
+
+	prometheusJobName := serviceMonitorNSName + "/" + group
+
+	prometheusName := "test"
+	svc := framework.MakePrometheusService(prometheusName, group, v1.ServiceTypeClusterIP)
+
+	s := framework.MakeBasicServiceMonitor(group)
+
+	if _, err := framework.MonClient.ServiceMonitors(serviceMonitorNSName).Create(s); err != nil {
+		t.Fatal("Creating ServiceMonitor failed: ", err)
+	}
+
+	p := framework.MakeBasicPrometheus(prometheusNSName, prometheusName, group, 1)
+	p.Spec.ServiceMonitorNamespaceSelector = &metav1.LabelSelector{
+		MatchLabels: map[string]string{
+			"team": "frontend",
+		},
+	}
+	if err := framework.CreatePrometheusAndWaitUntilReady(prometheusNSName, p); err != nil {
+		t.Fatal(err)
+	}
+
+	if finalizerFn, err := testFramework.CreateServiceAndWaitUntilReady(framework.KubeClient, prometheusNSName, svc); err != nil {
+		t.Fatal(errors.Wrap(err, "creating prometheus service failed"))
+	} else {
+		ctx.AddFinalizerFn(finalizerFn)
+	}
+
+	resp, err := framework.QueryPrometheusSVC(prometheusNSName, svc.Name, "/api/v1/status/config", map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Count(string(resp), prometheusJobName) != 1 {
+		t.Fatalf("expected Prometheus operator to configure Prometheus in ns '%v' to scrape the service monitor in ns '%v'", prometheusNSName, serviceMonitorNSName)
 	}
 }
 

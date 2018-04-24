@@ -60,6 +60,9 @@ type PrometheusSpec struct {
 	PodMetadata *metav1.ObjectMeta `json:"podMetadata,omitempty"`
 	// ServiceMonitors to be selected for target discovery.
 	ServiceMonitorSelector *metav1.LabelSelector `json:"serviceMonitorSelector,omitempty"`
+	// Namespaces to be selected for ServiceMonitor discovery. If empty, only
+	// check own namespace.
+	ServiceMonitorNamespaceSelector *metav1.LabelSelector `json:"serviceMonitorNamespaceSelector,omitempty"`
 	// Version of Prometheus to be deployed.
 	Version string `json:"version,omitempty"`
 	// When a Prometheus deployment is paused, no actions except for deletion
@@ -75,7 +78,7 @@ type PrometheusSpec struct {
 	Replicas *int32 `json:"replicas,omitempty"`
 	// Time duration Prometheus shall retain data for.
 	Retention string `json:"retention,omitempty"`
-	// Log level for Prometheus be configured in.
+	// Log level for Prometheus to be configured with.
 	LogLevel string `json:"logLevel,omitempty"`
 	// Interval between consecutive scrapes.
 	ScrapeInterval string `json:"scrapeInterval,omitempty"`
@@ -213,18 +216,18 @@ type RemoteReadSpec struct {
 	//An optional list of equality matchers which have to be present
 	// in a selector to query the remote read endpoint.
 	RequiredMatchers map[string]string `json:"requiredMatchers,omitempty"`
-	//Timeout for requests to the remote write endpoint.
+	//Timeout for requests to the remote read endpoint.
 	RemoteTimeout string `json:"remoteTimeout,omitempty"`
 	//Whether reads should be made for queries for time ranges that
 	// the local storage should have complete data for.
 	ReadRecent bool `json:"readRecent,omitempty"`
 	//BasicAuth for the URL.
 	BasicAuth *BasicAuth `json:"basicAuth,omitempty"`
-	// bearer token for remote write.
+	// bearer token for remote read.
 	BearerToken string `json:"bearerToken,omitempty"`
-	// File to read bearer token for remote write.
+	// File to read bearer token for remote read.
 	BearerTokenFile string `json:"bearerTokenFile,omitempty"`
-	// TLS Config to use for remote write.
+	// TLS Config to use for remote read.
 	TLSConfig *TLSConfig `json:"tlsConfig,omitempty"`
 	//Optional ProxyURL
 	ProxyURL string `json:"proxyUrl,omitempty"`
@@ -332,6 +335,8 @@ type Endpoint struct {
 	BasicAuth *BasicAuth `json:"basicAuth,omitempty"`
 	// MetricRelabelConfigs to apply to samples before ingestion.
 	MetricRelabelConfigs []*RelabelConfig `json:"metricRelabelings,omitempty"`
+	// StaticTargets with targets to scrape. This is an experimental feature, it may change in any upcoming release in a breaking way.
+	StaticTargets []string `json:"staticTargets,omitempty"`
 }
 
 // BasicAuth allow an endpoint to authenticate over basic authentication
@@ -408,6 +413,8 @@ type AlertmanagerSpec struct {
 	// object, which shall be mounted into the Alertmanager Pods.
 	// The Secrets are mounted into /etc/alertmanager/secrets/<secret-name>.
 	Secrets []string `json:"secrets,omitempty"`
+	// Log level for Alertmanager to be configured with.
+	LogLevel string `json:"logLevel,omitempty"`
 	// Size is the expected size of the alertmanager cluster. The controller will
 	// eventually make the size of the running cluster equal to the expected
 	// size.

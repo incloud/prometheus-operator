@@ -22,11 +22,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	appsv1 "k8s.io/api/apps/v1beta2"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	testFramework "github.com/coreos/prometheus-operator/test/framework"
 )
@@ -132,7 +134,7 @@ func TestMeshInitialization(t *testing.T) {
 
 	// Starting with Alertmanager v0.15.0 hashicorp/memberlist is used for HA.
 	// Make sure both memberlist as well as mesh (< 0.15.0) work
-	amVersions := []string{"v0.14.0", "v0.15.0-rc.0"}
+	amVersions := []string{"v0.14.0", "v0.15.0-rc.1"}
 
 	for _, v := range amVersions {
 		version := v
@@ -166,6 +168,55 @@ func TestMeshInitialization(t *testing.T) {
 				}
 			},
 		)
+	}
+}
+
+func TestAlertmanagerClusterGossipSilences(t *testing.T) {
+	t.Parallel()
+	ctx := framework.NewTestCtx(t)
+	defer ctx.Cleanup(t)
+	ns := ctx.CreateNamespace(t, framework.KubeClient)
+	ctx.SetupPrometheusRBAC(t, ns, framework.KubeClient)
+
+	amClusterSize := 3
+	alertmanager := framework.MakeBasicAlertmanager("test", int32(amClusterSize))
+	alertmanager.Spec.Version = "v0.15.0-rc.1"
+
+	if err := framework.CreateAlertmanagerAndWaitUntilReady(ns, alertmanager); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < amClusterSize; i++ {
+		name := "alertmanager-" + alertmanager.Name + "-" + strconv.Itoa(i)
+		if err := framework.WaitForAlertmanagerInitializedMesh(ns, name, amClusterSize); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	silId, err := framework.CreateSilence(ns, "alertmanager-test-0")
+	if err != nil {
+		t.Fatalf("failed to create silence: %v", err)
+	}
+
+	for i := 0; i < amClusterSize; i++ {
+		err = wait.Poll(time.Second, framework.DefaultTimeout, func() (bool, error) {
+			silences, err := framework.GetSilences(ns, "alertmanager-"+alertmanager.Name+"-"+strconv.Itoa(i))
+			if err != nil {
+				return false, err
+			}
+
+			if len(silences) != 1 {
+				return false, nil
+			}
+
+			if silences[0].ID != silId {
+				return false, errors.Errorf("expected silence id on alertmanager %v to match id of created silence '%v' but got %v", i, silId, silences[0].ID)
+			}
+			return true, nil
+		})
+		if err != nil {
+			t.Fatalf("could not retrieve created silence on alertmanager %v: %v", i, err)
+		}
 	}
 }
 
@@ -324,8 +375,8 @@ func TestAlertmanagerZeroDowntimeRollingDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	alertmanager := framework.MakeBasicAlertmanager("rolling-deploy", 2)
-	alertmanager.Spec.Version = "v0.7.0"
+	alertmanager := framework.MakeBasicAlertmanager("rolling-deploy", 3)
+	alertmanager.Spec.Version = "v0.13.0"
 	amsvc := framework.MakeAlertmanagerService(alertmanager.Name, "test", v1.ServiceTypeClusterIP)
 	amcfg := &v1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -394,7 +445,23 @@ groups:
 		t.Fatal(err)
 	}
 
-	time.Sleep(1 * time.Minute)
+	pSVC := framework.MakePrometheusService(p.Name, "not-relevant", v1.ServiceTypeClusterIP)
+	if finalizerFn, err := testFramework.CreateServiceAndWaitUntilReady(framework.KubeClient, ns, pSVC); err != nil {
+		t.Fatal(errors.Wrap(err, "creating Prometheus service failed"))
+	} else {
+		ctx.AddFinalizerFn(finalizerFn)
+	}
+
+	// The Prometheus config reloader reloads Prometheus periodically, not on
+	// alert rule change. Thereby one has to wait for Prometheus actually firing
+	// the alert.
+	err = framework.WaitForPrometheusFiringAlert(p.Namespace, pSVC.Name, "ExampleAlert")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for alert to propagate
+	time.Sleep(10 * time.Second)
 
 	opts := metav1.ListOptions{
 		LabelSelector: fields.SelectorFromSet(fields.Set(map[string]string{
@@ -421,7 +488,7 @@ groups:
 		t.Fatalf("One notification expected, but %d received.\n\n%s", c, logs)
 	}
 
-	alertmanager.Spec.Version = "v0.7.1"
+	alertmanager.Spec.Version = "v0.14.0"
 	if _, err := framework.MonClient.Alertmanagers(ns).Update(alertmanager); err != nil {
 		t.Fatal(err)
 	}

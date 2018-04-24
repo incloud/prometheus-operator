@@ -92,6 +92,7 @@ Specification of the desired behavior of the Alertmanager cluster. More info: ht
 | baseImage | Base image that is used to deploy pods, without tag. | string | false |
 | imagePullSecrets | An optional list of references to secrets in the same namespace to use for pulling prometheus and alertmanager images from registries see http://kubernetes.io/docs/user-guide/images#specifying-imagepullsecrets-on-a-pod | [][v1.LocalObjectReference](https://v1-6.docs.kubernetes.io/docs/api-reference/v1.6/#localobjectreference-v1-core) | false |
 | secrets | Secrets is a list of Secrets in the same namespace as the Alertmanager object, which shall be mounted into the Alertmanager Pods. The Secrets are mounted into /etc/alertmanager/secrets/<secret-name>. | []string | false |
+| logLevel | Log level for Alertmanager to be configured with. | string | false |
 | replicas | Size is the expected size of the alertmanager cluster. The controller will eventually make the size of the running cluster equal to the expected size. | *int32 | false |
 | storage | Storage is the definition of how storage will be used by the Alertmanager instances. | *[StorageSpec](#storagespec) | false |
 | externalUrl | The external URL the Alertmanager instances will be available under. This is necessary to generate correct URLs. This is necessary if Alertmanager is not served from root of a DNS name. | string | false |
@@ -151,6 +152,7 @@ Endpoint defines a scrapeable endpoint serving Prometheus metrics.
 | honorLabels | HonorLabels chooses the metric's labels on collisions with target labels. | bool | false |
 | basicAuth | BasicAuth allow an endpoint to authenticate over basic authentication More info: https://prometheus.io/docs/operating/configuration/#endpoints | *[BasicAuth](#basicauth) | false |
 | metricRelabelings | MetricRelabelConfigs to apply to samples before ingestion. | []*[RelabelConfig](#relabelconfig) | false |
+| staticTargets | StaticTargets with targets to scrape. This is an experimental feature, it may change in any upcoming release in a breaking way. | []string | false |
 
 [Back to TOC](#table-of-contents)
 
@@ -196,13 +198,14 @@ Specification of the desired behavior of the Prometheus cluster. More info: http
 | ----- | ----------- | ------ | -------- |
 | podMetadata | Standard object’s metadata. More info: https://github.com/kubernetes/community/blob/master/contributors/devel/api-conventions.md#metadata Metadata Labels and Annotations gets propagated to the prometheus pods. | *[metav1.ObjectMeta](https://v1-6.docs.kubernetes.io/docs/api-reference/v1.6/#objectmeta-v1-meta) | false |
 | serviceMonitorSelector | ServiceMonitors to be selected for target discovery. | *[metav1.LabelSelector](https://v1-6.docs.kubernetes.io/docs/api-reference/v1.6/#labelselector-v1-meta) | false |
+| serviceMonitorNamespaceSelector | Namespaces to be selected for ServiceMonitor discovery. If empty, only check own namespace. | *[metav1.LabelSelector](https://v1-6.docs.kubernetes.io/docs/api-reference/v1.6/#labelselector-v1-meta) | false |
 | version | Version of Prometheus to be deployed. | string | false |
 | paused | When a Prometheus deployment is paused, no actions except for deletion will be performed on the underlying objects. | bool | false |
 | baseImage | Base image to use for a Prometheus deployment. | string | false |
 | imagePullSecrets | An optional list of references to secrets in the same namespace to use for pulling prometheus and alertmanager images from registries see http://kubernetes.io/docs/user-guide/images#specifying-imagepullsecrets-on-a-pod | [][v1.LocalObjectReference](https://v1-6.docs.kubernetes.io/docs/api-reference/v1.6/#localobjectreference-v1-core) | false |
 | replicas | Number of instances to deploy for a Prometheus deployment. | *int32 | false |
 | retention | Time duration Prometheus shall retain data for. | string | false |
-| logLevel | Log level for Prometheus be configured in. | string | false |
+| logLevel | Log level for Prometheus to be configured with. | string | false |
 | scrapeInterval | Interval between consecutive scrapes. | string | false |
 | evaluationInterval | Interval between consecutive evaluations. | string | false |
 | externalLabels | The labels to add to any time series or alerts when communicating with external systems (federation, remote storage, Alertmanager). | map[string]string | false |
@@ -263,12 +266,12 @@ RemoteReadSpec defines the remote_read configuration for prometheus.
 | ----- | ----------- | ------ | -------- |
 | url | The URL of the endpoint to send samples to. | string | true |
 | requiredMatchers | An optional list of equality matchers which have to be present in a selector to query the remote read endpoint. | map[string]string | false |
-| remoteTimeout | Timeout for requests to the remote write endpoint. | string | false |
+| remoteTimeout | Timeout for requests to the remote read endpoint. | string | false |
 | readRecent | Whether reads should be made for queries for time ranges that the local storage should have complete data for. | bool | false |
 | basicAuth | BasicAuth for the URL. | *[BasicAuth](#basicauth) | false |
-| bearerToken | bearer token for remote write. | string | false |
-| bearerTokenFile | File to read bearer token for remote write. | string | false |
-| tlsConfig | TLS Config to use for remote write. | *[TLSConfig](#tlsconfig) | false |
+| bearerToken | bearer token for remote read. | string | false |
+| bearerTokenFile | File to read bearer token for remote read. | string | false |
+| tlsConfig | TLS Config to use for remote read. | *[TLSConfig](#tlsconfig) | false |
 | proxyUrl | Optional ProxyURL | string | false |
 
 [Back to TOC](#table-of-contents)
