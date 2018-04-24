@@ -54,5 +54,6 @@ dependencies:
   - name: grafana
     version: 0.0.24
     #e2e-repository: file://../grafana
-    repository: https://s3-eu-west-1.amazonaws.com/coreos-charts/stable/
+    #repository: https://s3-eu-west-1.amazonaws.com/coreos-charts/stable/
+    repository: file://../grafana
     condition: deployGrafana

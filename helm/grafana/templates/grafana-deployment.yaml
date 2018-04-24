@@ -91,6 +91,8 @@ spec:
         volumeMounts:
           - name: grafana-dashboards
             mountPath: /var/grafana-dashboards
+          - name: grafana-config
+            mountPath: /etc/grafana
     {{- if .Values.nodeSelector }}
       nodeSelector:
     {{ toYaml .Values.nodeSelector | indent 4 }}
@@ -112,7 +114,6 @@ spec:
             name: {{ template "grafana.server.fullname" . }}
       {{- if .Values.mountGrafanaConfig }}
         - name: grafana-config
-          hostPath:
-            path: /etc/grafana
-            type: directory
+          configMap:
+            name: grafana-config
       {{- end }}
