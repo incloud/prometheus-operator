@@ -40,6 +40,11 @@ spec:
 {{- if .Values.extraVars }}
 {{ toYaml .Values.extraVars | indent 8 }}
 {{- end }}
+{{- if .Values.useAdditionalSecretEnv }}
+        envFrom:
+        - secretRef:
+            name: grafana-additional
+{{ end }}
         volumeMounts:
         - name: grafana-storage
           mountPath: /var/lib/grafana
